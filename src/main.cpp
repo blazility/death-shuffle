@@ -170,11 +170,26 @@ void announce(ShuffleSong const& song) {
 // start position or checkpoint gives a start time past the song offset.
 // Work out how far into the level that is, so our song can skip ahead the same amount.
 int musicElapsedMs(PlayLayer* layer, int gdStartMs) {
+    if (!layer) return 0;
+
     int levelOffsetMs = 0;
-    if (layer && layer->m_levelSettings) {
+    if (layer->m_levelSettings) {
         levelOffsetMs = static_cast<int>(layer->m_levelSettings->m_songOffset * 1000.f);
     }
-    return std::max(0, gdStartMs - levelOffsetMs - g_levelNongOffsetMs);
+    int fromGD = gdStartMs - levelOffsetMs - g_levelNongOffsetMs;
+
+    // GD doesn't always put the start position into the music start time,
+    // so also ask it how far into the level the player's spawn point is.
+    int fromPos = 0;
+    if (layer->m_player1) {
+        float seconds = layer->timeForPos(layer->m_player1->getPosition(), 0, 0, false, 0);
+        fromPos = static_cast<int>(seconds * 1000.f);
+    }
+
+    int elapsed = std::max({0, fromGD, fromPos});
+    log::debug("Music start: GD start {}ms, level offset {}ms, spawn time {}ms -> skipping {}ms", gdStartMs,
+               levelOffsetMs, fromPos, elapsed);
+    return elapsed;
 }
 
 int shuffledStartMs(ShuffleSong const& song) {
@@ -231,6 +246,7 @@ class $modify(DeathShufflePlayLayer, PlayLayer) {
         PlayLayer::resetLevel();
 
         if (g_startPending && activeIn(this)) {
+            g_lastElapsedMs = musicElapsedMs(this, 0);
             // Let GD restart the music so it works out the right time for
             // start positions and checkpoints; our hook swaps in the new song.
             this->startMusic();
