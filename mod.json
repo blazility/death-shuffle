@@ -8,7 +8,7 @@
   },
   "id": "yourname.death-shuffle",
   "name": "Death Shuffle",
-  "version": "v1.1.0",
+  "version": "v1.2.0",
   "developers": [
     "YourName"
   ],
@@ -49,6 +49,12 @@
     "use-song-offset": {
       "name": "Use Jukebox start offsets",
       "description": "Start each song at the offset you set for it in Jukebox.",
+      "type": "bool",
+      "default": true
+    },
+    "sync-start-pos": {
+      "name": "Sync to start positions",
+      "description": "When you spawn from a start position or checkpoint, skip ahead in the random song by the same amount the level's song would. Turn off to always start songs from the beginning.",
       "type": "bool",
       "default": true
     },

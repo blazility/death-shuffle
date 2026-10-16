@@ -9,6 +9,7 @@
 #include <Geode/modify/FMODAudioEngine.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <optional>
 #include <random>
@@ -29,6 +30,8 @@ struct ShuffleSong {
 std::vector<ShuffleSong> g_pool;
 std::optional<ShuffleSong> g_current;  // song currently replacing the level music
 bool g_startPending = false;           // a new song was rolled and still needs to start
+int g_levelNongOffsetMs = 0;           // Jukebox's offset for the level's own active song
+int g_lastElapsedMs = 0;               // where in the level GD last started the music
 std::mt19937 g_rng{std::random_device{}()};
 
 bool setting(std::string_view key) {
@@ -88,10 +91,12 @@ void loadSongPool(GJGameLevel* level) {
     }
 
     std::filesystem::path manifestDir = jukebox->getSaveDir() / "manifest";
+    std::vector<int> ids = levelSongIDs(level);
+    g_levelNongOffsetMs = 0;
     bool includeDefaults = setting("include-default-songs");
     std::unordered_set<std::string> seen;
 
-    for (int id : levelSongIDs(level)) {
+    for (int id : ids) {
         std::filesystem::path file = manifestDir / fmt::format("{}.json", id);
         std::error_code ec;
         if (!std::filesystem::is_regular_file(file, ec)) continue;  // no NONGs for this song
@@ -102,6 +107,23 @@ void loadSongPool(GJGameLevel* level) {
             continue;
         }
         matjson::Value json = jsonRes.unwrap();
+
+        // Jukebox shifts the level's main song by the active NONG's offset.
+        // Remember it so start positions line up (see musicElapsedMs).
+        if (id == ids.front() && json["active"].isString()) {
+            std::string active = json["active"].asString().unwrap();
+            for (char const* list : {"locals", "youtube", "hosted"}) {
+                if (!json[list].isArray()) continue;
+                for (auto const& song : json[list]) {
+                    if (song["unique_id"].asString().unwrapOr("") == active) {
+                        g_levelNongOffsetMs = static_cast<int>(song["offset"].asInt().unwrapOr(0));
+                    }
+                }
+            }
+            if (json["default"]["unique_id"].asString().unwrapOr("") == active) {
+                g_levelNongOffsetMs = static_cast<int>(json["default"]["offset"].asInt().unwrapOr(0));
+            }
+        }
 
         for (char const* list : {"locals", "youtube", "hosted"}) {
             if (!json[list].isArray()) continue;
@@ -144,14 +166,31 @@ void announce(ShuffleSong const& song) {
     Notification::create(fmt::format("Now playing: {}", text), NotificationIcon::Info, 2.f)->show();
 }
 
+// GD starts the level song at (level song offset + time into the level), so a
+// start position or checkpoint gives a start time past the song offset.
+// Work out how far into the level that is, so our song can skip ahead the same amount.
+int musicElapsedMs(PlayLayer* layer, int gdStartMs) {
+    int levelOffsetMs = 0;
+    if (layer && layer->m_levelSettings) {
+        levelOffsetMs = static_cast<int>(layer->m_levelSettings->m_songOffset * 1000.f);
+    }
+    return std::max(0, gdStartMs - levelOffsetMs - g_levelNongOffsetMs);
+}
+
+int shuffledStartMs(ShuffleSong const& song) {
+    int start = startOffsetFor(song);
+    if (setting("sync-start-pos")) start += g_lastElapsedMs;
+    return start;
+}
+
+// Fallback for when GD doesn't restart the music itself on respawn.
 void startCurrentSong() {
     if (!g_current) return;
     g_startPending = false;
 
     auto engine = FMODAudioEngine::get();
-    // The queueStartMusic hook below swaps the file and offset for us.
     engine->playMusic(utils::string::pathToString(g_current->path), true, 0.f, 0);
-    engine->setMusicTimeMS(startOffsetFor(*g_current), true, 0);
+    engine->setMusicTimeMS(shuffledStartMs(*g_current), true, 0);
     announce(*g_current);
 }
 
@@ -191,7 +230,12 @@ class $modify(DeathShufflePlayLayer, PlayLayer) {
         m_fields->rolledThisDeath = false;
         PlayLayer::resetLevel();
 
-        if (g_startPending && activeIn(this)) startCurrentSong();
+        if (g_startPending && activeIn(this)) {
+            // Let GD restart the music so it works out the right time for
+            // start positions and checkpoints; our hook swaps in the new song.
+            this->startMusic();
+            if (g_startPending) startCurrentSong();
+        }
     }
 
     void onQuit() {
@@ -202,19 +246,29 @@ class $modify(DeathShufflePlayLayer, PlayLayer) {
 };
 
 class $modify(DeathShuffleAudio, FMODAudioEngine) {
+    static void onModify(auto& self) {
+        // Run after Jukebox's own hook, so the start time we see already
+        // includes Jukebox's offset for the level song.
+        if (auto jukebox = Loader::get()->getLoadedMod("fleym.nongd")) {
+            (void)self.setHookPriorityAfter("FMODAudioEngine::queueStartMusic", jukebox);
+        }
+    }
+
     // Whenever GD (re)starts the level's main music, play our song instead.
     void queueStartMusic(gd::string audioFilename, float pitch, float unknown, float volume, bool loop, int start,
                          int end, int fadeIn, int fadeOut, int musicID, bool p10, int channelID, bool noPrepare,
                          bool dontReset) {
         auto layer = PlayLayer::get();
         // Channel 0 is the main level song; leave song triggers on other channels alone.
+        if (channelID == 0 && layer) g_lastElapsedMs = musicElapsedMs(layer, start);
+
         if (g_current && channelID == 0 && activeIn(layer)) {
             if (g_startPending) {
                 g_startPending = false;
                 announce(*g_current);
             }
             FMODAudioEngine::queueStartMusic(utils::string::pathToString(g_current->path), pitch, unknown, volume,
-                                             true, startOffsetFor(*g_current), 0, fadeIn, fadeOut, musicID, p10,
+                                             true, shuffledStartMs(*g_current), 0, fadeIn, fadeOut, musicID, p10,
                                              channelID, noPrepare, dontReset);
             return;
         }
