@@ -57,7 +57,28 @@ void addSong(matjson::Value const& song, std::unordered_set<std::string>& seen) 
     g_pool.push_back(std::move(s));
 }
 
-void loadSongPool() {
+// The IDs Jukebox uses to name its manifest files (<id>.json) for every song
+// this level uses. Jukebox stores RobTop's official songs as -(track + 1)
+// so they don't clash with Newgrounds IDs.
+std::vector<int> levelSongIDs(GJGameLevel* level) {
+    std::vector<int> ids;
+    if (!level) return ids;
+
+    if (level->m_songID != 0) {
+        ids.push_back(level->m_songID);
+    } else {
+        ids.push_back(-level->m_audioTrack - 1);
+    }
+
+    // Extra songs used by song triggers in the level, comma separated.
+    for (auto const& part : utils::string::split(std::string(level->m_songIDs), ",")) {
+        auto id = utils::numFromString<int>(part);
+        if (id.isOk() && id.unwrap() > 0) ids.push_back(id.unwrap());
+    }
+    return ids;
+}
+
+void loadSongPool(GJGameLevel* level) {
     g_pool.clear();
 
     Mod* jukebox = Loader::get()->getLoadedMod("fleym.nongd");
@@ -67,21 +88,17 @@ void loadSongPool() {
     }
 
     std::filesystem::path manifestDir = jukebox->getSaveDir() / "manifest";
-    std::error_code ec;
-    if (!std::filesystem::is_directory(manifestDir, ec)) {
-        log::warn("Jukebox manifest folder not found at {}", manifestDir);
-        return;
-    }
-
     bool includeDefaults = setting("include-default-songs");
     std::unordered_set<std::string> seen;
 
-    for (auto const& entry : std::filesystem::directory_iterator(manifestDir, ec)) {
-        if (entry.path().extension() != ".json") continue;
+    for (int id : levelSongIDs(level)) {
+        std::filesystem::path file = manifestDir / fmt::format("{}.json", id);
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(file, ec)) continue;  // no NONGs for this song
 
-        auto jsonRes = utils::file::readJson(entry.path());
+        auto jsonRes = utils::file::readJson(file);
         if (jsonRes.isErr()) {
-            log::warn("Skipping {}: {}", entry.path().filename(), jsonRes.unwrapErr());
+            log::warn("Skipping {}: {}", file.filename(), jsonRes.unwrapErr());
             continue;
         }
         matjson::Value json = jsonRes.unwrap();
@@ -93,7 +110,7 @@ void loadSongPool() {
         if (includeDefaults) addSong(json["default"], seen);
     }
 
-    log::info("Death Shuffle loaded {} songs from Jukebox", g_pool.size());
+    log::info("Death Shuffle found {} downloaded songs for this level", g_pool.size());
 }
 
 void rollSong() {
@@ -148,7 +165,7 @@ class $modify(DeathShufflePlayLayer, PlayLayer) {
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
         g_current.reset();
         g_startPending = false;
-        loadSongPool();
+        loadSongPool(level);
 
         if (setting("enabled") && setting("shuffle-first-attempt")) rollSong();
 

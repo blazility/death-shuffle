@@ -8,10 +8,16 @@
   },
   "id": "yourname.death-shuffle",
   "name": "Death Shuffle",
-  "version": "v1.0.0",
-  "developers": ["YourName"],
-  "description": "Every time you die, the level music switches to a random song you downloaded with Jukebox.",
-  "tags": ["music", "joke", "gameplay"],
+  "version": "v1.1.0",
+  "developers": [
+    "YourName"
+  ],
+  "description": "Every time you die, the level music switches to a random song you downloaded for that level with Jukebox.",
+  "tags": [
+    "music",
+    "joke",
+    "gameplay"
+  ],
   "dependencies": {
     "fleym.nongd": ">=3.8.0"
   },
@@ -35,8 +41,8 @@
       "default": true
     },
     "include-default-songs": {
-      "name": "Include normal GD songs",
-      "description": "Also pick from the regular Newgrounds/GD songs Jukebox knows about, not just your custom NONGs.",
+      "name": "Include the level's original song",
+      "description": "Also put the level's normal song (the one it shipped with) into the shuffle, not just the Jukebox songs you downloaded for it.",
       "type": "bool",
       "default": false
     },
