@@ -1,0 +1,56 @@
+{
+  "geode": "5.10.1",
+  "gd": {
+    "win": "2.2081",
+    "mac": "2.2081",
+    "ios": "2.2081",
+    "android": "2.2081"
+  },
+  "id": "yourname.death-shuffle",
+  "name": "Death Shuffle",
+  "version": "v1.0.0",
+  "developers": ["YourName"],
+  "description": "Every time you die, the level music switches to a random song you downloaded with Jukebox.",
+  "tags": ["music", "joke", "gameplay"],
+  "dependencies": {
+    "fleym.nongd": ">=3.8.0"
+  },
+  "settings": {
+    "enabled": {
+      "name": "Enabled",
+      "description": "Switch to a random Jukebox song every time you die.",
+      "type": "bool",
+      "default": true
+    },
+    "shuffle-first-attempt": {
+      "name": "Shuffle the first attempt too",
+      "description": "Start the level with a random song instead of its normal one.",
+      "type": "bool",
+      "default": false
+    },
+    "in-practice": {
+      "name": "Work in practice mode",
+      "description": "Also shuffle songs when dying in practice mode.",
+      "type": "bool",
+      "default": true
+    },
+    "include-default-songs": {
+      "name": "Include normal GD songs",
+      "description": "Also pick from the regular Newgrounds/GD songs Jukebox knows about, not just your custom NONGs.",
+      "type": "bool",
+      "default": false
+    },
+    "use-song-offset": {
+      "name": "Use Jukebox start offsets",
+      "description": "Start each song at the offset you set for it in Jukebox.",
+      "type": "bool",
+      "default": true
+    },
+    "show-song-name": {
+      "name": "Show song name",
+      "description": "Pop up a small notification with the song's name when it changes.",
+      "type": "bool",
+      "default": true
+    }
+  }
+}
