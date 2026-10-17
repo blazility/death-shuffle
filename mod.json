@@ -8,7 +8,7 @@
   },
   "id": "yourname.death-shuffle",
   "name": "Death Shuffle",
-  "version": "v1.2.1",
+  "version": "v1.3.0",
   "developers": [
     "YourName"
   ],
@@ -45,6 +45,12 @@
       "description": "Also put the level's normal song (the one it shipped with) into the shuffle, not just the Jukebox songs you downloaded for it.",
       "type": "bool",
       "default": false
+    },
+    "use-level-offset": {
+      "name": "Use the level's song offset",
+      "description": "If the level starts partway through its song, start the random songs at that same point instead of from the beginning.",
+      "type": "bool",
+      "default": true
     },
     "use-song-offset": {
       "name": "Use Jukebox start offsets",

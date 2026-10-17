@@ -192,8 +192,16 @@ int musicElapsedMs(PlayLayer* layer, int gdStartMs) {
     return elapsed;
 }
 
+// The level's own "song offset" (levels that start partway through their song).
+int levelSongOffsetMs() {
+    auto layer = PlayLayer::get();
+    if (!layer || !layer->m_levelSettings) return 0;
+    return std::max(0, static_cast<int>(layer->m_levelSettings->m_songOffset * 1000.f));
+}
+
 int shuffledStartMs(ShuffleSong const& song) {
     int start = startOffsetFor(song);
+    if (setting("use-level-offset")) start += levelSongOffsetMs();
     if (setting("sync-start-pos")) start += g_lastElapsedMs;
     return start;
 }
