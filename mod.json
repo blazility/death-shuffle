@@ -8,7 +8,7 @@
   },
   "id": "yourname.death-shuffle",
   "name": "Death Shuffle",
-  "version": "v1.4.0",
+  "version": "v1.5.0",
   "developers": [
     "YourName"
   ],
@@ -67,6 +67,12 @@
     "show-song-name": {
       "name": "Show song name",
       "description": "Pop up a small notification with the song's name when it changes.",
+      "type": "bool",
+      "default": true
+    },
+    "show-pause-button": {
+      "name": "Songs button in pause menu",
+      "description": "Show a 'Songs' button in the pause menu where you can pick which downloaded songs are in the shuffle for that level.",
       "type": "bool",
       "default": true
     }

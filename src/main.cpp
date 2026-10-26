@@ -7,7 +7,10 @@
 
 #include <Geode/Geode.hpp>
 #include <Geode/modify/FMODAudioEngine.hpp>
+#include <Geode/modify/PauseLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
+#include <Geode/ui/Popup.hpp>
+#include <Geode/ui/ScrollLayer.hpp>
 
 #include <algorithm>
 #include <filesystem>
@@ -21,13 +24,15 @@ using namespace geode::prelude;
 namespace {
 
 struct ShuffleSong {
+    std::string id;  // Jukebox's unique ID for the song (used to remember exclusions)
     std::filesystem::path path;
     std::string name;
     std::string artist;
     int offset = 0;  // the start offset set for this song in Jukebox
 };
 
-std::vector<ShuffleSong> g_pool;
+std::vector<ShuffleSong> g_pool;        // every downloaded song for this level
+std::string g_levelKey;                 // identifies the level for saved exclusions
 std::optional<ShuffleSong> g_current;  // song currently replacing the level music
 bool g_startPending = false;           // a new song was rolled and still needs to start
 bool g_restarting = false;             // GD is (re)starting the level music right now
@@ -56,6 +61,7 @@ void addSong(matjson::Value const& song, std::unordered_set<std::string>& seen) 
     if (!seen.insert(key).second) return;  // same file listed twice
 
     ShuffleSong s;
+    s.id = song["unique_id"].asString().unwrapOr(key);
     s.path = std::move(path);
     s.name = song["name"].asString().unwrapOr("Unknown song");
     s.artist = song["artist"].asString().unwrapOr("");
@@ -119,18 +125,54 @@ void loadSongPool(GJGameLevel* level) {
     log::info("Death Shuffle found {} downloaded songs for this level", g_pool.size());
 }
 
+// ---- Per-level exclusions ----
+
+std::string levelKeyFor(GJGameLevel* level) {
+    if (!level) return "";
+    int id = level->m_levelID.value();
+    if (id > 0) return fmt::format("excluded-{}", id);
+    // Local/editor levels have no ID, so fall back to the name.
+    return fmt::format("excluded-local-{}", std::string(level->m_levelName));
+}
+
+std::vector<std::string> excludedIDs() {
+    if (g_levelKey.empty()) return {};
+    return Mod::get()->getSavedValue<std::vector<std::string>>(g_levelKey, {});
+}
+
+bool isExcluded(ShuffleSong const& song, std::vector<std::string> const& excluded) {
+    return std::find(excluded.begin(), excluded.end(), song.id) != excluded.end();
+}
+
+void setExcluded(ShuffleSong const& song, bool exclude) {
+    if (g_levelKey.empty()) return;
+    auto excluded = excludedIDs();
+    std::erase(excluded, song.id);
+    if (exclude) excluded.push_back(song.id);
+    Mod::get()->setSavedValue(g_levelKey, excluded);
+}
+
 void rollSong() {
-    if (g_pool.empty()) return;
-
-    std::uniform_int_distribution<size_t> dist(0, g_pool.size() - 1);
-    size_t index = dist(g_rng);
-
-    // Avoid getting the same song twice in a row when there's a choice.
-    if (g_current && g_pool.size() > 1) {
-        while (g_pool[index].path == g_current->path) index = dist(g_rng);
+    auto excluded = excludedIDs();
+    std::vector<ShuffleSong const*> choices;
+    for (auto const& song : g_pool) {
+        if (!isExcluded(song, excluded)) choices.push_back(&song);
     }
 
-    g_current = g_pool[index];
+    // Everything excluded: go back to the level's normal song.
+    if (choices.empty()) {
+        g_current.reset();
+        g_startPending = false;
+        return;
+    }
+
+    // Avoid getting the same song twice in a row when there's a choice.
+    if (g_current && choices.size() > 1) {
+        std::erase_if(choices, [](ShuffleSong const* s) { return s->path == g_current->path; });
+    }
+
+    std::uniform_int_distribution<size_t> dist(0, choices.size() - 1);
+    g_current = *choices[dist(g_rng)];
     g_startPending = true;
 }
 
@@ -223,7 +265,131 @@ void startCurrentSong(PlayLayer* layer) {
     announce(*g_current);
 }
 
+// ---- Song picker popup (pause menu) ----
+
+class SongPickerPopup : public Popup {
+protected:
+    bool init() {
+        if (!Popup::init(360.f, 250.f)) return false;
+        this->setTitle("Death Shuffle Songs");
+
+        auto hint = CCLabelBMFont::create("Untick songs to leave them out on this level.", "chatFont.fnt");
+        hint->setScale(.7f);
+        m_mainLayer->addChildAtPosition(hint, Anchor::Top, ccp(0, -42));
+
+        if (g_pool.empty()) {
+            auto empty = CCLabelBMFont::create("No Jukebox songs downloaded for this level.", "bigFont.fnt");
+            empty->limitLabelWidth(m_size.width - 40.f, .5f, .1f);
+            m_mainLayer->addChildAtPosition(empty, Anchor::Center, ccp(0, -10));
+            return true;
+        }
+
+        constexpr float listWidth = 320.f;
+        constexpr float listHeight = 160.f;
+        constexpr float rowHeight = 28.f;
+
+        auto bg = NineSlice::create("square02b_001.png");
+        bg->setColor({0, 0, 0});
+        bg->setOpacity(70);
+        bg->setContentSize({listWidth, listHeight});
+        m_mainLayer->addChildAtPosition(bg, Anchor::Center, ccp(0, -15));
+
+        auto scroll = ScrollLayer::create(CCSize{listWidth, listHeight});
+        scroll->ignoreAnchorPointForPosition(false);
+        m_mainLayer->addChildAtPosition(scroll, Anchor::Center, ccp(0, -15));
+
+        auto content = scroll->m_contentLayer;
+        float totalHeight = std::max(listHeight, rowHeight * static_cast<float>(g_pool.size()));
+        content->setContentSize({listWidth, totalHeight});
+
+        auto excluded = excludedIDs();
+        for (size_t i = 0; i < g_pool.size(); ++i) {
+            auto const& song = g_pool[i];
+            float y = totalHeight - rowHeight * (static_cast<float>(i) + .5f);
+
+            auto menu = CCMenu::create();
+            menu->setContentSize({listWidth, rowHeight});
+            menu->ignoreAnchorPointForPosition(false);
+            menu->setPosition({listWidth / 2, y});
+
+            auto toggler = CCMenuItemToggler::createWithStandardSprites(
+                this, menu_selector(SongPickerPopup::onToggle), .6f
+            );
+            toggler->setTag(static_cast<int>(i));
+            toggler->toggle(!isExcluded(song, excluded));  // ticked = in the shuffle
+            toggler->setPosition({18.f, rowHeight / 2});
+            menu->addChild(toggler);
+
+            std::string text = song.artist.empty() ? song.name : fmt::format("{} - {}", song.name, song.artist);
+            auto label = CCLabelBMFont::create(shorten(text, 60).c_str(), "bigFont.fnt");
+            label->setAnchorPoint({0.f, .5f});
+            label->limitLabelWidth(listWidth - 50.f, .45f, .2f);
+            label->setPosition({38.f, rowHeight / 2});
+            menu->addChild(label);
+
+            content->addChild(menu);
+        }
+        scroll->scrollToTop();
+
+        auto note = CCLabelBMFont::create("Changes apply from your next death.", "chatFont.fnt");
+        note->setScale(.55f);
+        note->setOpacity(180);
+        m_mainLayer->addChildAtPosition(note, Anchor::Bottom, ccp(0, 13));
+
+        return true;
+    }
+
+    void onToggle(CCObject* sender) {
+        auto toggler = static_cast<CCMenuItemToggler*>(sender);
+        size_t index = static_cast<size_t>(toggler->getTag());
+        if (index >= g_pool.size()) return;
+        // The toggler flips after this callback, so it's still ticked here
+        // when the song is about to be excluded.
+        setExcluded(g_pool[index], toggler->isToggled());
+    }
+
+public:
+    static SongPickerPopup* create() {
+        auto ret = new SongPickerPopup();
+        if (ret->init()) {
+            ret->autorelease();
+            return ret;
+        }
+        delete ret;
+        return nullptr;
+    }
+};
+
 }  // namespace
+
+class $modify(DeathShufflePauseLayer, PauseLayer) {
+    void customSetup() {
+        PauseLayer::customSetup();
+        if (!PlayLayer::get() || !setting("show-pause-button")) return;
+
+        auto spr = ButtonSprite::create("Songs", "goldFont.fnt", "GJ_button_04.png", .8f);
+        spr->setScale(.6f);
+        auto btn = CCMenuItemSpriteExtra::create(spr, this, menu_selector(DeathShufflePauseLayer::onSongPicker));
+        btn->setID("songs-button"_spr);
+
+        // Use the left-side button column if another mod (node IDs) set one up.
+        if (auto menu = this->getChildByID("left-button-menu")) {
+            menu->addChild(btn);
+            menu->updateLayout();
+            return;
+        }
+
+        auto menu = CCMenu::create();
+        menu->setID("menu"_spr);
+        menu->setPosition({45.f, 30.f});
+        menu->addChild(btn);
+        this->addChild(menu, 10);
+    }
+
+    void onSongPicker(CCObject*) {
+        if (auto popup = SongPickerPopup::create()) popup->show();
+    }
+};
 
 class $modify(DeathShufflePlayLayer, PlayLayer) {
     struct Fields {
@@ -235,6 +401,7 @@ class $modify(DeathShufflePlayLayer, PlayLayer) {
         g_startPending = false;
         g_restarting = false;
         hidePopup();
+        g_levelKey = levelKeyFor(level);
         loadSongPool(level);
 
         if (setting("enabled") && setting("shuffle-first-attempt")) rollSong();

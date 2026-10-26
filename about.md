@@ -7,6 +7,7 @@ Every time you die, the level music switches to a **random song you downloaded f
 - Shows the new song's name when it changes
 - Works in practice mode (can be turned off)
 - Lines up with start positions, checkpoints and levels that start partway through their song
+- A "Songs" button in the pause menu lets you leave specific songs out of the shuffle for each level
 - Optionally shuffles the very first attempt too, and can include the level's original song
 
 Requires **Jukebox**.
